@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Diffy</title>
+    <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+    <script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0-RC.7/bundles/datastar.js"></script>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      #canvas { background:
+          repeating-linear-gradient(0deg, #1e293b 0 1px, transparent 1px 24px),
+          repeating-linear-gradient(90deg, #1e293b 0 1px, transparent 1px 24px),
+          #0f172a; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100"
+      data-signals="{pos:{}, drag:{id:'',offx:0,offy:0,active:false}, connect:{fromNode:'',fromPort:'',toNode:'',toPort:'',sx:0,sy:0,cx:0,cy:0}, newKind:'agent'}"
+      data-init="@get('/updates', {retry:'always'})">
+
+  <header class="flex items-center gap-2 p-3 border-b border-gray-700 bg-gray-800">
+    <h1 class="text-lg font-semibold mr-4">Diffy</h1>
+    <select data-bind:newKind class="bg-gray-700 rounded px-2 py-1 text-sm">
+      <option value="input">Input</option>
+      <option value="agent">Agent</option>
+      <option value="approval">Approval</option>
+      <option value="delay">Delay</option>
+      <option value="output">Output</option>
+    </select>
+    <button data-on:click="@post('/nodes')"
+            class="rounded bg-sky-500 hover:bg-sky-600 px-3 py-1 text-sm font-medium cursor-pointer">
+      + Add node
+    </button>
+    <button data-on:click="@post('/save')"
+            class="rounded bg-gray-600 hover:bg-gray-500 px-3 py-1 text-sm font-medium cursor-pointer">
+      💾 Save layout
+    </button>
+    <span id="save-status" class="text-xs text-gray-500"></span>
+    <button data-on:click="@post('/runs')"
+            class="rounded bg-emerald-600 hover:bg-emerald-700 px-3 py-1 text-sm font-medium cursor-pointer">
+      ▶ Run
+    </button>
+    <span class="ml-auto text-xs text-gray-400">
+      drag body to move · drag out-port (cyan) to in-port (purple) to connect · click edge to delete
+    </span>
+  </header>
+
+  <div class="overflow-auto" style="height: calc(100vh - 57px)">
+    <svg id="canvas" width="2000" height="1200"
+         data-on:pointermove="
+           $drag.active && (() => { const r = evt.currentTarget.getBoundingClientRect(); $pos[$drag.id].x = evt.clientX - r.left - $drag.offx; $pos[$drag.id].y = evt.clientY - r.top - $drag.offy; })();
+           $connect.fromNode && (() => { const r = evt.currentTarget.getBoundingClientRect(); $connect.cx = evt.clientX - r.left; $connect.cy = evt.clientY - r.top; })()"
+         data-on:pointerup="
+           $drag.active && ($drag.active=false);
+           $connect.fromNode && (window.__dp = document.elementFromPoint(evt.clientX, evt.clientY)?.closest?.('[data-dir=\'in\']'));
+           (window.__dp && window.__dp.dataset.node !== $connect.fromNode) && ($connect.toNode=window.__dp.dataset.node, $connect.toPort=window.__dp.dataset.port, @post('/edges'));
+           $connect.fromNode && ($connect.fromNode='');
+           window.__dp=null">
+    </svg>
+  </div>
+</body>
+</html>
