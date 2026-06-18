@@ -36,3 +36,16 @@ func NewNodeOfKind(id string, kind NodeKind, x, y float64) *Node {
 	}
 	return n
 }
+
+// NewCustomNode builds a user-defined node. Title, ports, and config all come
+// from the UI; at run time the executor treats it like an agent node. Title
+// defaults to "Custom" and config is always non-nil.
+func NewCustomNode(id, title string, ports []Port, config map[string]string, x, y float64) *Node {
+	if title == "" {
+		title = "Custom"
+	}
+	if config == nil {
+		config = map[string]string{}
+	}
+	return &Node{ID: id, Kind: KindCustom, Title: title, X: x, Y: y, Ports: ports, Config: config}
+}

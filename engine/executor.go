@@ -45,7 +45,7 @@ func (e *Engine) run(runID string, g *domain.Graph) {
 			outputs[nodeID] = out
 			e.emit(runID, domain.Event{NodeID: nodeID, Type: domain.EvNodeOutput, Data: map[string]any{"text": out}})
 
-		case domain.KindAgent:
+		case domain.KindAgent, domain.KindCustom:
 			out := e.Agent(n, gather(nodeID))
 			outputs[nodeID] = out
 			e.emit(runID, domain.Event{NodeID: nodeID, Type: domain.EvNodeOutput, Data: map[string]any{"text": out}})

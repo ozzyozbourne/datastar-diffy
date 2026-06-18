@@ -37,6 +37,7 @@ const (
 	KindApproval NodeKind = "approval"
 	KindDelay    NodeKind = "delay"
 	KindOutput   NodeKind = "output"
+	KindCustom   NodeKind = "custom"
 )
 
 // Node is a single box on the canvas.

@@ -14,21 +14,21 @@
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100"
-      data-signals="{pos:{}, drag:{id:'',offx:0,offy:0,active:false}, connect:{fromNode:'',fromPort:'',toNode:'',toPort:'',sx:0,sy:0,cx:0,cy:0}, newKind:'agent'}"
+      data-signals="{pos:{}, drag:{id:'',offx:0,offy:0,active:false}, connect:{fromNode:'',fromPort:'',toNode:'',toPort:'',sx:0,sy:0,cx:0,cy:0}, newKind:'agent', draft:{open:false,error:'',title:'',portsText:'in input text\nout result text',configText:'prompt=summarize'}, chat:{open:false,user:'',message:''}}"
       data-init="@get('/updates', {retry:'always'})">
 
   <header class="flex items-center gap-2 p-3 border-b border-gray-700 bg-gray-800">
     <h1 class="text-lg font-semibold mr-4">Diffy</h1>
-    <select data-bind:newKind class="bg-gray-700 rounded px-2 py-1 text-sm">
-      <option value="input">Input</option>
-      <option value="agent">Agent</option>
-      <option value="approval">Approval</option>
-      <option value="delay">Delay</option>
-      <option value="output">Output</option>
-    </select>
+    <!-- Options are server-rendered (built-ins + custom-node templates) and
+         streamed in on connect; see editor.snapshot / broadcastKindOptions. -->
+    <select id="kind-select" data-bind:newKind class="bg-gray-700 rounded px-2 py-1 text-sm"></select>
     <button data-on:click="@post('/nodes')"
             class="rounded bg-sky-500 hover:bg-sky-600 px-3 py-1 text-sm font-medium cursor-pointer">
       + Add node
+    </button>
+    <button data-on:click="$draft.error='';$draft.open=true"
+            class="rounded bg-indigo-500 hover:bg-indigo-600 px-3 py-1 text-sm font-medium cursor-pointer">
+      ✏ Custom node
     </button>
     <button data-on:click="@post('/save')"
             class="rounded bg-gray-600 hover:bg-gray-500 px-3 py-1 text-sm font-medium cursor-pointer">
@@ -56,6 +56,83 @@
            $connect.fromNode && ($connect.fromNode='');
            window.__dp=null">
     </svg>
+  </div>
+
+  <!-- Floating chat. The stream + #messages live in this always-present wrapper
+       (the popup is only hidden via data-show, never removed) so the SSE stays
+       connected and messages keep arriving while collapsed. The username is
+       seeded from localStorage on load (data-persist is a Datastar Pro plugin,
+       absent from the OSS core). -->
+  <div data-init="$chat.user = localStorage.getItem('diffychat.user') || ''; @get('/chat/updates', {retry:'always'})">
+
+    <!-- Launcher icon, shown when the chat is closed. -->
+    <button data-show="!$chat.open"
+            data-on:click="$chat.open=true; document.getElementById('messages')?.scrollTo(0,1e9)"
+            title="Open chat"
+            class="fixed bottom-4 right-4 z-20 h-12 w-12 rounded-full bg-sky-500 hover:bg-sky-600 text-xl shadow-lg cursor-pointer flex items-center justify-center">
+      💬
+    </button>
+
+    <!-- Popup, shown when open. -->
+    <div data-show="$chat.open"
+         class="fixed bottom-4 right-4 z-20 w-72 h-96 flex flex-col rounded-lg border border-gray-700 bg-gray-800 shadow-xl">
+      <div class="flex items-center gap-2 p-2 border-b border-gray-700">
+        <h2 class="text-sm font-semibold">Chat</h2>
+        <input data-bind:chat.user placeholder="your name"
+               data-on:input="localStorage.setItem('diffychat.user', $chat.user)"
+               class="flex-1 min-w-0 rounded bg-gray-700 px-2 py-1 text-xs">
+        <button data-on:click="$chat.open=false" title="Close chat"
+                class="rounded px-2 text-base leading-none text-gray-400 hover:text-gray-100 cursor-pointer">✕</button>
+      </div>
+      <div id="messages" class="flex-1 overflow-y-auto p-2 flex flex-col gap-1"></div>
+      <form class="flex gap-1 p-2 border-t border-gray-700"
+            data-on:submit="@post('/chat'); $chat.message=''">
+        <input data-bind:chat.message autocomplete="off" maxlength="500" placeholder="message…"
+               class="flex-1 min-w-0 rounded bg-gray-700 px-2 py-1 text-sm">
+        <button class="rounded bg-sky-500 hover:bg-sky-600 px-3 py-1 text-sm font-medium cursor-pointer">Send</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Custom-node modal. Draft lives in client signals only (never broadcast);
+       Create POSTs them to /nodes/custom and the new node arrives over /updates. -->
+  <div data-show="$draft.open"
+       class="fixed inset-0 z-10 flex items-center justify-center bg-black/50">
+    <div class="w-[28rem] rounded-lg border border-gray-700 bg-gray-800 p-5 shadow-xl">
+      <h2 class="mb-3 text-base font-semibold">New custom node</h2>
+
+      <div data-show="$draft.error" data-text="$draft.error"
+           class="mb-3 rounded bg-red-500/15 px-2 py-1 text-xs text-red-300"></div>
+
+      <label class="mb-1 block text-xs text-gray-400">Title</label>
+      <input data-bind:draft.title placeholder="e.g. Translator"
+             class="mb-3 w-full rounded bg-gray-700 px-2 py-1 text-sm">
+
+      <label class="mb-1 block text-xs text-gray-400">
+        Ports — one per line as <code>dir name [type]</code>, where <code>dir</code> is
+        <code>in</code> or <code>out</code> and <code>type</code> (optional) is
+        <code>text</code>, <code>trigger</code> or <code>agent</code>.
+      </label>
+      <textarea data-bind:draft.portsText rows="3" spellcheck="false"
+                placeholder="in input text&#10;out result text"
+                class="mb-3 w-full rounded bg-gray-700 px-2 py-1 font-mono text-xs"></textarea>
+
+      <label class="mb-1 block text-xs text-gray-400">Config — one <code>key=value</code> per line</label>
+      <textarea data-bind:draft.configText rows="2" spellcheck="false"
+                placeholder="prompt=summarize"
+                class="mb-4 w-full rounded bg-gray-700 px-2 py-1 font-mono text-xs"></textarea>
+
+      <div class="flex justify-end gap-2">
+        <button data-on:click="$draft.open=false"
+                class="rounded bg-gray-600 hover:bg-gray-500 px-3 py-1 text-sm cursor-pointer">
+          Cancel
+        </button>
+        <button data-on:click="@post('/nodes/custom')"
+                class="rounded bg-indigo-500 hover:bg-indigo-600 px-3 py-1 text-sm font-medium cursor-pointer">
+          Create
+        </button>
+      </div>
+    </div>
   </div>
 </body>
 </html>

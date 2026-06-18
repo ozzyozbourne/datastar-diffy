@@ -11,6 +11,30 @@ import (
 	"diffy/domain"
 )
 
+// KindOption is one entry in the toolbar's node-kind dropdown.
+type KindOption struct{ Value, Label string }
+
+// builtinKinds are the always-present node kinds, in display order.
+var builtinKinds = []KindOption{
+	{"input", "Input"},
+	{"agent", "Agent"},
+	{"approval", "Approval"},
+	{"delay", "Delay"},
+	{"output", "Output"},
+}
+
+// RenderKindOptions renders the <option> list for the kind dropdown: the
+// built-in kinds followed by any user-defined custom-node templates. Rendered
+// server-side (and inner-patched whole) so reconnects never duplicate options.
+func RenderKindOptions(custom []KindOption) string {
+	var b strings.Builder
+	for _, o := range append(append([]KindOption{}, builtinKinds...), custom...) {
+		fmt.Fprintf(&b, `<option value="%s">%s</option>`,
+			html.EscapeString(o.Value), html.EscapeString(o.Label))
+	}
+	return b.String()
+}
+
 // Node geometry (SVG user units == pixels; the canvas is rendered 1:1).
 const (
 	NodeW = 170.0
@@ -61,6 +85,8 @@ func nodeFill(kind domain.NodeKind) string {
 		return "#1e5f3a"
 	case domain.KindOutput:
 		return "#5f1e3a"
+	case domain.KindCustom:
+		return "#3a3a5f"
 	default:
 		return "#374151"
 	}
@@ -117,6 +143,15 @@ func RenderNode(n *domain.Node) string {
 			`<circle cx="%g" cy="%g" r="%g" fill="%s" stroke="#0f172a" stroke-width="1.5" data-node="%s" data-port="%s" data-dir="%s" style="cursor:crosshair"%s/>`,
 			lx, ly, PortR, fillCol, n.ID, p.ID, dir, attrs)
 	}
+
+	// Delete button: small ✕ circle in the top-right corner of the node.
+	del := fmt.Sprintf("evt.stopPropagation();@delete('/nodes/%s')", n.ID)
+	fmt.Fprintf(&b,
+		`<circle cx="%g" cy="10" r="8" fill="#ef4444" stroke="#0f172a" stroke-width="1" style="cursor:pointer" data-on:click="%s"/>`,
+		NodeW-10, html.EscapeString(del))
+	fmt.Fprintf(&b,
+		`<text x="%g" y="14" text-anchor="middle" fill="white" font-size="11" font-weight="700" style="pointer-events:none">&#x2715;</text>`,
+		NodeW-10)
 
 	b.WriteString(`</g>`)
 	return b.String()
