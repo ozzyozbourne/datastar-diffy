@@ -13,6 +13,7 @@ import (
 	"github.com/starfederation/datastar-go/datastar"
 
 	"diffy/domain"
+	"diffy/flows"
 	"diffy/hub"
 	"diffy/render"
 	"diffy/store"
@@ -31,6 +32,7 @@ type template struct {
 type Editor struct {
 	Store   *store.Memory
 	Hub     *hub.Hub
+	Flows   *flows.Registry
 	GraphID string
 
 	nodeSeq atomic.Int64
@@ -41,9 +43,9 @@ type Editor struct {
 	templates []*template // custom-node templates, in creation order
 }
 
-// New constructs an Editor over the given store/hub/graph.
-func New(s *store.Memory, h *hub.Hub, graphID string) *Editor {
-	return &Editor{Store: s, Hub: h, GraphID: graphID}
+// New constructs an Editor over the given store/hub/graph and saved-flow registry.
+func New(s *store.Memory, h *hub.Hub, graphID string, fl *flows.Registry) *Editor {
+	return &Editor{Store: s, Hub: h, Flows: fl, GraphID: graphID}
 }
 
 // kindOptionsHTML renders the dropdown's <option> list (built-ins + templates).
@@ -64,6 +66,27 @@ func (e *Editor) broadcastKindOptions() {
 	e.Hub.Broadcast(func(sse *datastar.ServerSentEventGenerator) error {
 		return sse.PatchElements(html,
 			datastar.WithSelector("#kind-select"),
+			datastar.WithModeInner())
+	})
+}
+
+// savedFlowsHTML renders the saved-flows panel (name + trigger keywords).
+func (e *Editor) savedFlowsHTML() string {
+	saved := e.Flows.All()
+	items := make([]render.SavedFlow, len(saved))
+	for i, s := range saved {
+		items[i] = render.SavedFlow{Name: s.Name, Keywords: s.Keywords}
+	}
+	return render.RenderSavedFlows(items)
+}
+
+// broadcastSavedFlows repaints the saved-flows panel on every tab (inner-morph
+// the whole list, so reconnects/duplicate saves never stack entries).
+func (e *Editor) broadcastSavedFlows() {
+	html := e.savedFlowsHTML()
+	e.Hub.Broadcast(func(sse *datastar.ServerSentEventGenerator) error {
+		return sse.PatchElements(html,
+			datastar.WithSelector("#saved-flows"),
 			datastar.WithModeInner())
 	})
 }
@@ -118,6 +141,12 @@ func (e *Editor) snapshot(sse *datastar.ServerSentEventGenerator) error {
 	// Seed the kind dropdown with built-ins + any custom-node templates.
 	if err := sse.PatchElements(e.kindOptionsHTML(),
 		datastar.WithSelector("#kind-select"),
+		datastar.WithModeInner()); err != nil {
+		return err
+	}
+	// Seed the saved-flows panel so new/reconnecting tabs see existing flows.
+	if err := sse.PatchElements(e.savedFlowsHTML(),
+		datastar.WithSelector("#saved-flows"),
 		datastar.WithModeInner()); err != nil {
 		return err
 	}
@@ -188,6 +217,13 @@ type signals struct {
 		PortsText  string `json:"portsText"`
 		ConfigText string `json:"configText"`
 	} `json:"draft"`
+	Inspect struct {
+		ID         string `json:"id"`
+		ConfigText string `json:"configText"`
+	} `json:"inspect"`
+	Flow struct {
+		Name string `json:"name"`
+	} `json:"flow"`
 }
 
 // nextPlacement allocates a unique node id and a staggered baseline position so
@@ -304,6 +340,34 @@ func (e *Editor) AddCustomNode(w http.ResponseWriter, r *http.Request) {
 	sse.MarshalAndPatchSignals(map[string]any{"draft": map[string]any{"error": "", "open": false}})
 }
 
+// ConfigNode updates a node's config from the inspector (POST /nodes/{id}/config).
+// The config text is key=value lines (same grammar as the custom-node modal).
+// On success it repaints the node (so the summary/inspector seed update) and
+// closes the modal on the posting tab.
+func (e *Editor) ConfigNode(w http.ResponseWriter, r *http.Request) {
+	var s signals
+	if err := datastar.ReadSignals(r, &s); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	nodeID := chi.URLParam(r, "id")
+	config := domain.ParseConfig(s.Inspect.ConfigText)
+
+	sse := datastar.NewSSE(w, r)
+	if err := e.Store.SetNodeConfig(e.GraphID, nodeID, config); err != nil {
+		sse.MarshalAndPatchSignals(map[string]any{"inspect": map[string]any{"error": err.Error()}})
+		return
+	}
+
+	g, _ := e.Store.GetGraph(e.GraphID)
+	if n := g.Nodes[nodeID]; n != nil {
+		e.Hub.Broadcast(func(sse *datastar.ServerSentEventGenerator) error {
+			return sse.PatchElements(render.RenderNode(n), datastar.WithNamespaceSVG())
+		})
+	}
+	sse.MarshalAndPatchSignals(map[string]any{"inspect": map[string]any{"error": "", "open": false}})
+}
+
 // Save persists the current client layout as the server baseline (POST /save).
 // This is the only time the backend learns x/y. No broadcast: layout is
 // client-owned, so other clients keep their own arrangement.
@@ -319,6 +383,61 @@ func (e *Editor) Save(w http.ResponseWriter, r *http.Request) {
 	}
 	sse := datastar.NewSSE(w, r)
 	sse.PatchElements(`<span id="save-status" class="text-xs text-emerald-400">saved ✓</span>`)
+}
+
+// SaveFlow snapshots the current canvas as a named agentic flow in the in-memory
+// registry (POST /flows). Saved flows are what chat triggers fire — so we
+// require a name and at least one trigger node with a keyword (otherwise the
+// flow could never be fired). Validation failures come back as a $flow.error
+// signal shown in the modal (mirroring AddCustomNode's draftErr).
+func (e *Editor) SaveFlow(w http.ResponseWriter, r *http.Request) {
+	var s signals
+	if err := datastar.ReadSignals(r, &s); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	sse := datastar.NewSSE(w, r)
+	flowErr := func(msg string) error {
+		return sse.MarshalAndPatchSignals(map[string]any{"flow": map[string]any{"error": msg}})
+	}
+
+	name := strings.TrimSpace(s.Flow.Name)
+	if name == "" {
+		flowErr("name is required")
+		return
+	}
+	g, err := e.Store.GetGraph(e.GraphID)
+	if err != nil {
+		flowErr(err.Error())
+		return
+	}
+	if !hasTriggerKeyword(g) {
+		flowErr("add a Trigger node with a keyword so chat can fire this flow")
+		return
+	}
+
+	saved := e.Flows.Save(name, g)
+	e.broadcastSavedFlows()
+
+	// Success: clear any prior error, close the modal, and confirm on the posting
+	// tab which keyword(s) will fire the flow.
+	sse.MarshalAndPatchSignals(map[string]any{"flow": map[string]any{
+		"error": "",
+		"open":  false,
+		"saved": fmt.Sprintf("saved %q ✓ — fires on: %s", saved.Name, strings.Join(saved.Keywords, ", ")),
+	}})
+}
+
+// hasTriggerKeyword reports whether the graph has at least one trigger node with
+// a non-empty keyword (same config access as domain.MatchTriggers).
+func hasTriggerKeyword(g *domain.Graph) bool {
+	for _, n := range g.Nodes {
+		if n.Kind == domain.KindTrigger && strings.TrimSpace(n.Config["keyword"]) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // DeleteNode removes a node and its incident edges (DELETE /nodes/{id}).

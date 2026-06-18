@@ -17,6 +17,10 @@ type Chat struct {
 	Room *Room
 	Hub  *hub.Hub
 
+	// Trigger is called after a human message is posted, so the host can fire any
+	// matching flow. Optional (nil-checked). Bot replies are excluded by Send.
+	Trigger func(user, text string)
+
 	cliSeq atomic.Int64
 }
 
@@ -93,6 +97,16 @@ func (c *Chat) Send(w http.ResponseWriter, r *http.Request) {
 		user = "anon"
 	}
 
+	c.Post(user, text)
+	if c.Trigger != nil {
+		c.Trigger(user, text)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Post appends a message and broadcasts it to every connected tab. Used both by
+// the Send handler and by the host to deliver flow replies (e.g. as "bot").
+func (c *Chat) Post(user, text string) Message {
 	m := c.Room.Add(user, text)
 	c.Hub.Broadcast(func(sse *datastar.ServerSentEventGenerator) error {
 		if err := sse.PatchElements(RenderMessage(m),
@@ -102,7 +116,23 @@ func (c *Chat) Send(w http.ResponseWriter, r *http.Request) {
 		}
 		return scrollToBottom(sse)
 	})
-	w.WriteHeader(http.StatusNoContent)
+	return m
+}
+
+// BroadcastApproval shows a pending approval card in every tab's chat panel.
+func (c *Chat) BroadcastApproval(runID, nodeID, prompt string) {
+	c.Hub.Broadcast(func(sse *datastar.ServerSentEventGenerator) error {
+		return sse.PatchElements(RenderApprovalCard(runID, nodeID, prompt),
+			datastar.WithSelector("#approvals"),
+			datastar.WithModeAppend())
+	})
+}
+
+// RemoveApproval removes a resolved approval card from every tab's chat panel.
+func (c *Chat) RemoveApproval(runID, nodeID string) {
+	c.Hub.Broadcast(func(sse *datastar.ServerSentEventGenerator) error {
+		return sse.RemoveElementByID(ApprovalCardID(runID, nodeID))
+	})
 }
 
 // scrollToBottom keeps the newest message in view after a patch. Written as a

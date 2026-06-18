@@ -6,10 +6,36 @@ package render
 import (
 	"fmt"
 	"html"
+	"sort"
 	"strings"
 
 	"diffy/domain"
 )
+
+// ConfigText serialises a node's config as sorted "key=value" lines — the form
+// shown in the inspector textarea and parsed back by domain.ParseConfig.
+func ConfigText(n *domain.Node) string {
+	keys := make([]string, 0, len(n.Config))
+	for k := range n.Config {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+n.Config[k])
+	}
+	return strings.Join(parts, "\n")
+}
+
+// jsString escapes s for embedding inside a single-quoted JS string literal in a
+// data-on attribute (html.EscapeString is applied afterwards by the caller).
+func jsString(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "'", "\\'")
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	return s
+}
 
 // KindOption is one entry in the toolbar's node-kind dropdown.
 type KindOption struct{ Value, Label string }
@@ -18,8 +44,10 @@ type KindOption struct{ Value, Label string }
 var builtinKinds = []KindOption{
 	{"input", "Input"},
 	{"agent", "Agent"},
+	{"trigger", "Trigger"},
 	{"approval", "Approval"},
-	{"delay", "Delay"},
+	{"delay", "Wait"},
+	{"reply", "Reply"},
 	{"output", "Output"},
 }
 
@@ -31,6 +59,33 @@ func RenderKindOptions(custom []KindOption) string {
 	for _, o := range append(append([]KindOption{}, builtinKinds...), custom...) {
 		fmt.Fprintf(&b, `<option value="%s">%s</option>`,
 			html.EscapeString(o.Value), html.EscapeString(o.Label))
+	}
+	return b.String()
+}
+
+// SavedFlow is one entry in the saved-flows panel: a flow's name and the trigger
+// keywords that fire it from chat.
+type SavedFlow struct {
+	Name     string
+	Keywords []string
+}
+
+// RenderSavedFlows renders the saved-flows list (inner-patched whole, like
+// RenderKindOptions, so reconnects/repaints never duplicate). Each row shows the
+// flow name and its trigger keyword(s).
+func RenderSavedFlows(flows []SavedFlow) string {
+	if len(flows) == 0 {
+		return `<span class="text-xs text-gray-500">no saved flows yet</span>`
+	}
+	var b strings.Builder
+	for _, f := range flows {
+		kw := "(no keyword)"
+		if len(f.Keywords) > 0 {
+			kw = strings.Join(f.Keywords, ", ")
+		}
+		fmt.Fprintf(&b,
+			`<span class="rounded bg-gray-700 px-2 py-1 text-xs"><span class="font-medium">%s</span> <span class="text-gray-400">▶ %s</span></span>`,
+			html.EscapeString(f.Name), html.EscapeString(kw))
 	}
 	return b.String()
 }
@@ -77,6 +132,10 @@ func nodeFill(kind domain.NodeKind) string {
 	switch kind {
 	case domain.KindAgent:
 		return "#1e3a5f"
+	case domain.KindTrigger:
+		return "#5f5f1e"
+	case domain.KindReply:
+		return "#1e5f5f"
 	case domain.KindApproval:
 		return "#5f3a1e"
 	case domain.KindDelay:
@@ -103,15 +162,19 @@ func RenderNode(n *domain.Node) string {
 		"($pos.%s && $pos.%s.x!=null) ? ('translate('+$pos.%s.x+','+$pos.%s.y+')') : '%s'",
 		n.ID, n.ID, n.ID, n.ID, baseline)
 
-	fmt.Fprintf(&b, `<g id="node-%s" transform="%s" data-attr:transform="%s" style="cursor:grab">`,
-		n.ID, baseline, html.EscapeString(posExpr))
+	// Title + config are stashed on the group so a click on the body (handled in
+	// the canvas pointerup, since pointer capture swallows the element's own
+	// click) can seed the inspector without baking it into the rect handler.
+	fmt.Fprintf(&b, `<g id="node-%s" transform="%s" data-attr:transform="%s" data-title="%s" data-cfgtext="%s" style="cursor:grab">`,
+		n.ID, baseline, html.EscapeString(posExpr),
+		html.EscapeString(n.Title), html.EscapeString(ConfigText(n)))
 
 	// Body: dragging this rect starts a node drag. Capture the pointer to the
 	// canvas so move/up keep tracking even if the cursor leaves the node. Grab
 	// offset is taken from the current $pos so the box doesn't jump.
 	down := fmt.Sprintf(
 		"evt.stopPropagation();const s=evt.currentTarget.closest('svg');s.setPointerCapture(evt.pointerId);const r=s.getBoundingClientRect();"+
-			"$drag.id='%s';$drag.active=true;$drag.offx=evt.clientX-r.left-$pos.%s.x;$drag.offy=evt.clientY-r.top-$pos.%s.y",
+			"$drag.id='%s';$drag.active=true;$drag.moved=false;$drag.offx=evt.clientX-r.left-$pos.%s.x;$drag.offy=evt.clientY-r.top-$pos.%s.y",
 		n.ID, n.ID, n.ID)
 	fmt.Fprintf(&b,
 		`<rect width="%g" height="%g" rx="8" fill="%s" stroke="#64748b" stroke-width="1.5" data-on:pointerdown="%s"/>`,
@@ -121,8 +184,20 @@ func RenderNode(n *domain.Node) string {
 		`<text x="12" y="24" fill="#e5e7eb" font-size="14" font-weight="600" style="pointer-events:none">%s</text>`,
 		html.EscapeString(n.Title))
 	fmt.Fprintf(&b,
-		`<text x="12" y="44" fill="#94a3b8" font-size="11" style="pointer-events:none">%s</text>`,
+		`<text x="12" y="42" fill="#94a3b8" font-size="11" style="pointer-events:none">%s</text>`,
 		html.EscapeString(string(n.Kind)))
+
+	// Config summary (one compact line) so keyword/seconds/message are visible
+	// without opening the inspector.
+	if summary := ConfigText(n); summary != "" {
+		summary = strings.ReplaceAll(summary, "\n", " · ")
+		if len(summary) > 26 {
+			summary = summary[:25] + "…"
+		}
+		fmt.Fprintf(&b,
+			`<text x="12" y="57" fill="#64748b" font-size="10" style="pointer-events:none">%s</text>`,
+			html.EscapeString(summary))
+	}
 
 	// Ports. Each carries data-* attributes for hit-testing on canvas pointerup.
 	// Output ports begin a connection (and capture the pointer to the canvas);
@@ -143,6 +218,23 @@ func RenderNode(n *domain.Node) string {
 			`<circle cx="%g" cy="%g" r="%g" fill="%s" stroke="#0f172a" stroke-width="1.5" data-node="%s" data-port="%s" data-dir="%s" style="cursor:crosshair"%s/>`,
 			lx, ly, PortR, fillCol, n.ID, p.ID, dir, attrs)
 	}
+
+	// Config button: small ⚙ circle that opens the inspector seeded with this
+	// node's current title + config. We set the bound signal AND the textarea's
+	// value directly: Datastar reflects signal→input on init but not always on a
+	// later programmatic change, so seeding the DOM guarantees the existing config
+	// is visible for editing (data-bind still carries edits back on input).
+	jsCfg := jsString(ConfigText(n))
+	cfg := fmt.Sprintf(
+		"evt.stopPropagation();$inspect.id='%s';$inspect.title='%s';$inspect.error='';$inspect.configText='%s';$inspect.open=true;"+
+			"document.getElementById('inspect-config').value='%s'",
+		n.ID, jsString(n.Title), jsCfg, jsCfg)
+	fmt.Fprintf(&b,
+		`<circle cx="%g" cy="10" r="8" fill="#475569" stroke="#0f172a" stroke-width="1" style="cursor:pointer" data-on:click="%s"/>`,
+		NodeW-30, html.EscapeString(cfg))
+	fmt.Fprintf(&b,
+		`<text x="%g" y="14" text-anchor="middle" fill="white" font-size="10" style="pointer-events:none">&#x2699;</text>`,
+		NodeW-30)
 
 	// Delete button: small ✕ circle in the top-right corner of the node.
 	del := fmt.Sprintf("evt.stopPropagation();@delete('/nodes/%s')", n.ID)

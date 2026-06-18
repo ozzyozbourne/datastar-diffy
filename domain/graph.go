@@ -34,8 +34,10 @@ type NodeKind string
 const (
 	KindInput    NodeKind = "input"
 	KindAgent    NodeKind = "agent"
+	KindTrigger  NodeKind = "trigger"
 	KindApproval NodeKind = "approval"
 	KindDelay    NodeKind = "delay"
+	KindReply    NodeKind = "reply"
 	KindOutput   NodeKind = "output"
 	KindCustom   NodeKind = "custom"
 )
@@ -85,6 +87,32 @@ func NewGraph(id string) *Graph {
 		Nodes: map[string]*Node{},
 		Edges: map[string]*Edge{},
 	}
+}
+
+// Clone returns a deep copy of the graph: fresh Nodes/Edges maps with copied
+// Node structs (own Ports slice and Config map) and Edge structs. Used to freeze
+// a snapshot that stays independent of later edits to the live graph.
+func (g *Graph) Clone() *Graph {
+	out := &Graph{
+		ID:      g.ID,
+		Version: g.Version,
+		Nodes:   make(map[string]*Node, len(g.Nodes)),
+		Edges:   make(map[string]*Edge, len(g.Edges)),
+	}
+	for id, n := range g.Nodes {
+		cn := *n
+		cn.Ports = append([]Port(nil), n.Ports...)
+		cn.Config = make(map[string]string, len(n.Config))
+		for k, v := range n.Config {
+			cn.Config[k] = v
+		}
+		out.Nodes[id] = &cn
+	}
+	for id, e := range g.Edges {
+		ce := *e
+		out.Edges[id] = &ce
+	}
+	return out
 }
 
 // CanConnect validates a proposed edge: ports must exist, be out->in, share a

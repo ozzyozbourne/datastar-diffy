@@ -29,3 +29,24 @@ func RenderMessages(msgs []Message) string {
 	}
 	return b.String()
 }
+
+// ApprovalCardID is the element id for a pending approval card in the chat panel.
+func ApprovalCardID(runID, nodeID string) string {
+	return fmt.Sprintf("approval-%s-%s", runID, nodeID)
+}
+
+// RenderApprovalCard renders a pending approval inline in the chat panel, with
+// Approve/Reject buttons that post to the run's existing decide endpoints. The
+// card is keyed so it can be removed once the decision is made.
+func RenderApprovalCard(runID, nodeID, prompt string) string {
+	id := ApprovalCardID(runID, nodeID)
+	approve := fmt.Sprintf("@post('/runs/%s/nodes/%s/approve')", runID, nodeID)
+	reject := fmt.Sprintf("@post('/runs/%s/nodes/%s/reject')", runID, nodeID)
+	return fmt.Sprintf(`<div id="%s" class="rounded border border-amber-500 bg-amber-500/10 p-2 text-sm">`+
+		`<div class="font-medium text-amber-300 mb-1">%s</div>`+
+		`<div class="flex gap-1">`+
+		`<button data-on:click="%s" class="rounded bg-emerald-600 hover:bg-emerald-700 px-2 py-0.5 text-xs cursor-pointer">Approve</button>`+
+		`<button data-on:click="%s" class="rounded bg-red-600 hover:bg-red-700 px-2 py-0.5 text-xs cursor-pointer">Reject</button>`+
+		`</div></div>`,
+		id, html.EscapeString(prompt), html.EscapeString(approve), html.EscapeString(reject))
+}

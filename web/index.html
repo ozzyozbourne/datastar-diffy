@@ -14,7 +14,7 @@
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100"
-      data-signals="{pos:{}, drag:{id:'',offx:0,offy:0,active:false}, connect:{fromNode:'',fromPort:'',toNode:'',toPort:'',sx:0,sy:0,cx:0,cy:0}, newKind:'agent', draft:{open:false,error:'',title:'',portsText:'in input text\nout result text',configText:'prompt=summarize'}, chat:{open:false,user:'',message:''}}"
+      data-signals="{pos:{}, drag:{id:'',offx:0,offy:0,active:false,moved:false}, connect:{fromNode:'',fromPort:'',toNode:'',toPort:'',sx:0,sy:0,cx:0,cy:0}, newKind:'agent', draft:{open:false,error:'',title:'',portsText:'in input text\nout result text',configText:'prompt=summarize'}, inspect:{open:false,error:'',id:'',title:'',configText:''}, flow:{open:false,error:'',name:'',saved:''}, chat:{open:false,user:'',message:''}}"
       data-init="@get('/updates', {retry:'always'})">
 
   <header class="flex items-center gap-2 p-3 border-b border-gray-700 bg-gray-800">
@@ -35,6 +35,10 @@
       💾 Save layout
     </button>
     <span id="save-status" class="text-xs text-gray-500"></span>
+    <button data-on:click="$flow.error='';$flow.name='';$flow.open=true"
+            class="rounded bg-amber-500 hover:bg-amber-600 px-3 py-1 text-sm font-medium cursor-pointer">
+      💾 Save agentic flow
+    </button>
     <button data-on:click="@post('/runs')"
             class="rounded bg-emerald-600 hover:bg-emerald-700 px-3 py-1 text-sm font-medium cursor-pointer">
       ▶ Run
@@ -44,13 +48,22 @@
     </span>
   </header>
 
+  <!-- Saved agentic flows: server-rendered list of named snapshots (name + the
+       trigger keyword that fires each from chat); seeded on connect and repainted
+       on save. See editor.savedFlowsHTML / broadcastSavedFlows. -->
+  <div class="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-gray-700 bg-gray-800/60">
+    <span class="text-xs font-medium text-gray-400">Saved flows:</span>
+    <span id="saved-flows" class="flex flex-wrap items-center gap-2"></span>
+    <span data-show="$flow.saved" data-text="$flow.saved" class="ml-2 text-xs text-emerald-400"></span>
+  </div>
+
   <div class="overflow-auto" style="height: calc(100vh - 57px)">
     <svg id="canvas" width="2000" height="1200"
          data-on:pointermove="
-           $drag.active && (() => { const r = evt.currentTarget.getBoundingClientRect(); $pos[$drag.id].x = evt.clientX - r.left - $drag.offx; $pos[$drag.id].y = evt.clientY - r.top - $drag.offy; })();
+           $drag.active && (() => { const r = evt.currentTarget.getBoundingClientRect(); $pos[$drag.id].x = evt.clientX - r.left - $drag.offx; $pos[$drag.id].y = evt.clientY - r.top - $drag.offy; $drag.moved=true; })();
            $connect.fromNode && (() => { const r = evt.currentTarget.getBoundingClientRect(); $connect.cx = evt.clientX - r.left; $connect.cy = evt.clientY - r.top; })()"
          data-on:pointerup="
-           $drag.active && ($drag.active=false);
+           $drag.active && (() => { if(!$drag.moved){ const el=document.getElementById('node-'+$drag.id); if(el){ const c=el.dataset.cfgtext||''; $inspect.id=$drag.id; $inspect.title=el.dataset.title||''; $inspect.error=''; $inspect.configText=c; $inspect.open=true; const ta=document.getElementById('inspect-config'); if(ta) ta.value=c; } } $drag.active=false; })();
            $connect.fromNode && (window.__dp = document.elementFromPoint(evt.clientX, evt.clientY)?.closest?.('[data-dir=\'in\']'));
            (window.__dp && window.__dp.dataset.node !== $connect.fromNode) && ($connect.toNode=window.__dp.dataset.node, $connect.toPort=window.__dp.dataset.port, @post('/edges'));
            $connect.fromNode && ($connect.fromNode='');
@@ -84,6 +97,9 @@
         <button data-on:click="$chat.open=false" title="Close chat"
                 class="rounded px-2 text-base leading-none text-gray-400 hover:text-gray-100 cursor-pointer">✕</button>
       </div>
+      <!-- Pending approvals from running flows; cards appended/removed over the
+           chat SSE stream (see chat.BroadcastApproval / RemoveApproval). -->
+      <div id="approvals" class="flex flex-col gap-1 px-2 pt-2 empty:hidden"></div>
       <div id="messages" class="flex-1 overflow-y-auto p-2 flex flex-col gap-1"></div>
       <form class="flex gap-1 p-2 border-t border-gray-700"
             data-on:submit="@post('/chat'); $chat.message=''">
@@ -130,6 +146,68 @@
         <button data-on:click="@post('/nodes/custom')"
                 class="rounded bg-indigo-500 hover:bg-indigo-600 px-3 py-1 text-sm font-medium cursor-pointer">
           Create
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Node inspector. Opened by a node's ⚙ button (seeds $inspect from the node's
+       current config); Save POSTs the edited key=value config to
+       /nodes/{id}/config and the repainted node arrives over /updates. -->
+  <div data-show="$inspect.open"
+       class="fixed inset-0 z-10 flex items-center justify-center bg-black/50">
+    <div class="w-[28rem] rounded-lg border border-gray-700 bg-gray-800 p-5 shadow-xl">
+      <h2 class="mb-3 text-base font-semibold">Edit <span data-text="$inspect.title"></span></h2>
+
+      <div data-show="$inspect.error" data-text="$inspect.error"
+           class="mb-3 rounded bg-red-500/15 px-2 py-1 text-xs text-red-300"></div>
+
+      <label class="mb-1 block text-xs text-gray-400">Config — one <code>key=value</code> per line</label>
+      <textarea id="inspect-config" data-bind:inspect.configText rows="4" spellcheck="false"
+                class="mb-4 w-full rounded bg-gray-700 px-2 py-1 font-mono text-xs"></textarea>
+
+      <div class="flex justify-end gap-2">
+        <button data-on:click="$inspect.open=false"
+                class="rounded bg-gray-600 hover:bg-gray-500 px-3 py-1 text-sm cursor-pointer">
+          Cancel
+        </button>
+        <button data-on:click="@post('/nodes/'+$inspect.id+'/config')"
+                class="rounded bg-indigo-500 hover:bg-indigo-600 px-3 py-1 text-sm font-medium cursor-pointer">
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save-agentic-flow modal. Snapshots the current canvas under a name into the
+       server's in-memory registry; that snapshot is then fired by its trigger
+       keyword in chat. Create POSTs the name to /flows. -->
+  <div data-show="$flow.open"
+       class="fixed inset-0 z-10 flex items-center justify-center bg-black/50">
+    <div class="w-[28rem] rounded-lg border border-gray-700 bg-gray-800 p-5 shadow-xl">
+      <h2 class="mb-3 text-base font-semibold">Save agentic flow</h2>
+
+      <div data-show="$flow.error" data-text="$flow.error"
+           class="mb-3 rounded bg-red-500/15 px-2 py-1 text-xs text-red-300"></div>
+
+      <p class="mb-3 text-xs text-gray-400">
+        Snapshots the current canvas. It will run when a chat message contains one
+        of its Trigger nodes' keywords.
+      </p>
+
+      <label class="mb-1 block text-xs text-gray-400">Name</label>
+      <input data-bind:flow.name placeholder="e.g. Deploy"
+             data-on:keydown="evt.key==='Enter' && @post('/flows')"
+             class="mb-4 w-full rounded bg-gray-700 px-2 py-1 text-sm">
+
+      <div class="flex justify-end gap-2">
+        <button data-on:click="$flow.open=false"
+                class="rounded bg-gray-600 hover:bg-gray-500 px-3 py-1 text-sm cursor-pointer">
+          Cancel
+        </button>
+        <button data-on:click="@post('/flows')"
+                class="rounded bg-amber-500 hover:bg-amber-600 px-3 py-1 text-sm font-medium cursor-pointer">
+          Save flow
         </button>
       </div>
     </div>

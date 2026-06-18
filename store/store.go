@@ -13,6 +13,7 @@ type Position struct {
 type GraphStore interface {
 	GetGraph(id string) (*domain.Graph, error)
 	AddNode(graphID string, n *domain.Node) error
+	SetNodeConfig(graphID, nodeID string, config map[string]string) error
 	SetPositions(graphID string, pos map[string]Position) error
 	DeleteNode(graphID, nodeID string) error
 	AddEdge(graphID string, e *domain.Edge) error

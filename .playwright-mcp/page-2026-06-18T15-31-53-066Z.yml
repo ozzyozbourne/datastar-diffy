@@ -1,0 +1,69 @@
+- generic [ref=e1]:
+  - banner [ref=e2]:
+    - heading "Diffy" [level=1] [ref=e3]
+    - combobox [ref=e4]:
+      - option "Input" [selected]
+      - option "Agent"
+      - option "Trigger"
+      - option "Approval"
+      - option "Wait"
+      - option "Reply"
+      - option "Output"
+    - button "+ Add node" [ref=e5] [cursor=pointer]
+    - button "✏ Custom node" [ref=e6] [cursor=pointer]
+    - button "💾 Save layout" [ref=e7] [cursor=pointer]
+    - button "▶ Run" [ref=e8] [cursor=pointer]
+    - generic [ref=e9]: drag body to move · drag out-port (cyan) to in-port (purple) to connect · click edge to delete
+  - img [ref=e11]:
+    - generic [ref=e17]:
+      - generic: Trigger
+      - generic: trigger
+      - generic: keyword=status
+      - generic: ⚙
+      - generic: ✕
+    - generic [ref=e22]:
+      - generic: Wait
+      - generic: delay
+      - generic: seconds=2
+      - generic: ⚙
+      - generic: ✕
+    - generic [ref=e28]:
+      - generic: Reply
+      - generic: reply
+      - generic: message=Here is your stat…
+      - generic: ⚙
+      - generic: ✕
+    - generic [ref=e33]:
+      - generic: Trigger
+      - generic: trigger
+      - generic: keyword=refund
+      - generic: ⚙
+      - generic: ✕
+    - generic [ref=e38]:
+      - generic: Approval
+      - generic: approval
+      - generic: prompt=Approve the refund?
+      - generic: ⚙
+      - generic: ✕
+    - generic [ref=e44]:
+      - generic: Reply
+      - generic: reply
+      - generic: message=Refund approved!
+      - generic: ⚙
+      - generic: ✕
+  - generic [ref=e50]:
+    - generic [ref=e51]:
+      - heading "Chat" [level=2] [ref=e52]
+      - textbox "your name" [ref=e53]
+      - button "✕" [ref=e54] [cursor=pointer]
+    - generic [ref=e60]:
+      - generic [ref=e61]: Approve the refund?
+      - generic [ref=e62]:
+        - button "Approve" [ref=e63] [cursor=pointer]
+        - button "Reject" [ref=e64] [cursor=pointer]
+    - generic [ref=e65]:
+      - text: anon 10:31
+      - generic [ref=e66]: i want a refund please
+    - generic [ref=e56]:
+      - textbox "message…" [active] [ref=e57]
+      - button "Send" [ref=e58] [cursor=pointer]

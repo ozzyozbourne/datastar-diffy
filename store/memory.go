@@ -58,6 +58,22 @@ func (m *Memory) AddNode(graphID string, n *domain.Node) error {
 	return nil
 }
 
+func (m *Memory) SetNodeConfig(graphID, nodeID string, config map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.graphs[graphID]
+	if !ok {
+		return fmt.Errorf("graph %q not found", graphID)
+	}
+	n, ok := g.Nodes[nodeID]
+	if !ok {
+		return fmt.Errorf("node %q not found", nodeID)
+	}
+	n.Config = config
+	g.Version++
+	return nil
+}
+
 func (m *Memory) SetPositions(graphID string, pos map[string]Position) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

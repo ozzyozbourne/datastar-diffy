@@ -11,6 +11,7 @@ import (
 	"diffy/domain"
 	"diffy/editor"
 	"diffy/engine"
+	"diffy/flows"
 	"diffy/hub"
 	"diffy/runs"
 	"diffy/store"
@@ -32,12 +33,34 @@ func main() {
 	mem.PutGraph(domain.NewGraph(graphID))
 
 	h := hub.New()
-	ed := editor.New(mem, h, graphID)
+	fl := flows.New()
+	ed := editor.New(mem, h, graphID, fl)
 	eng := engine.New(mem, mem)
 	rn := runs.New(eng, graphID, runHTML)
 
 	// Chat: an in-memory group chat on its own hub + SSE stream.
 	ch := chat.New(chat.NewRoom(), hub.New())
+
+	// Bridge flow side-effects into the chat: replies post as "bot", and approval
+	// gates surface as inline cards that resolve via the run decide endpoints.
+	eng.OnReply = func(text string) { ch.Post("bot", text) }
+	eng.OnApproval = func(runID, nodeID, prompt string) { ch.BroadcastApproval(runID, nodeID, prompt) }
+	eng.OnApprovalDone = func(runID, nodeID string) { ch.RemoveApproval(runID, nodeID) }
+
+	// A human chat message fires every saved flow whose trigger keyword it
+	// matches; each starts a run on that flow's frozen snapshot, scoped to the
+	// matched trigger and seeded with the message text. Only saved flows fire —
+	// the live canvas is a draft until "Save agentic flow" registers it.
+	ch.Trigger = func(user, text string) {
+		if user == "bot" {
+			return // don't let replies re-trigger flows
+		}
+		for _, f := range fl.All() {
+			for _, t := range f.Graph.MatchTriggers(text) {
+				eng.StartRunOnGraph(f.Graph, t.ID, text)
+			}
+		}
+	}
 
 	r := chi.NewRouter()
 
@@ -56,10 +79,12 @@ func main() {
 	r.Get("/updates", ed.Updates)
 	r.Post("/nodes", ed.AddNode)
 	r.Post("/nodes/custom", ed.AddCustomNode)
+	r.Post("/nodes/{id}/config", ed.ConfigNode)
 	r.Delete("/nodes/{id}", ed.DeleteNode)
 	r.Post("/edges", ed.AddEdge)
 	r.Delete("/edges/{id}", ed.DeleteEdge)
 	r.Post("/save", ed.Save)
+	r.Post("/flows", ed.SaveFlow)
 
 	// Chat: long-lived read + short write, same CQRS split as the editor.
 	r.Get("/chat/updates", ch.Updates)

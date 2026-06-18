@@ -16,6 +16,10 @@ func NewNodeOfKind(id string, kind NodeKind, x, y float64) *Node {
 			{ID: "out", Name: "out", Dir: PortOut, Type: TypeText},
 		}
 		n.Config["prompt"] = "summarize"
+	case KindTrigger:
+		n.Title = "Trigger"
+		n.Ports = []Port{{ID: "out", Name: "out", Dir: PortOut, Type: TypeText}}
+		n.Config["keyword"] = "hello"
 	case KindApproval:
 		n.Title = "Approval"
 		n.Ports = []Port{
@@ -24,12 +28,16 @@ func NewNodeOfKind(id string, kind NodeKind, x, y float64) *Node {
 		}
 		n.Config["prompt"] = "Approve this step?"
 	case KindDelay:
-		n.Title = "Delay"
+		n.Title = "Wait"
 		n.Ports = []Port{
 			{ID: "in", Name: "in", Dir: PortIn, Type: TypeText},
 			{ID: "out", Name: "out", Dir: PortOut, Type: TypeText},
 		}
 		n.Config["seconds"] = "10"
+	case KindReply:
+		n.Title = "Reply"
+		n.Ports = []Port{{ID: "in", Name: "in", Dir: PortIn, Type: TypeText}}
+		n.Config["message"] = "Done!"
 	case KindOutput:
 		n.Title = "Output"
 		n.Ports = []Port{{ID: "in", Name: "in", Dir: PortIn, Type: TypeText}}

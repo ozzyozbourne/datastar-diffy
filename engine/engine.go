@@ -62,6 +62,12 @@ type Engine struct {
 	runs   store.RunStore
 	Agent  AgentFunc
 
+	// Hooks bridge run side-effects to the outside world (e.g. chat) without the
+	// engine depending on those packages. All are optional (nil-checked).
+	OnReply        func(text string)                  // a reply node fired
+	OnApproval     func(runID, nodeID, prompt string) // approval gate opened
+	OnApprovalDone func(runID, nodeID string)         // approval resolved (granted/rejected)
+
 	mu    sync.Mutex
 	hubs  map[string]*runHub
 	waits map[string]chan Decision // key: runID|nodeID
@@ -136,7 +142,36 @@ func (e *Engine) StartRun(graphID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	go e.run(runID, g)
+	go e.run(runID, g, "", "")
+	return runID, nil
+}
+
+// StartRunFrom creates a run scoped to the subgraph reachable from startNodeID
+// (one flow on a shared canvas) and seeds that start node's output with input
+// (e.g. the chat message that fired the trigger).
+func (e *Engine) StartRunFrom(graphID, startNodeID, input string) (string, error) {
+	g, err := e.graphs.GetGraph(graphID)
+	if err != nil {
+		return "", err
+	}
+	runID, err := e.runs.CreateRun(graphID)
+	if err != nil {
+		return "", err
+	}
+	go e.run(runID, g, startNodeID, input)
+	return runID, nil
+}
+
+// StartRunOnGraph creates a run on the given graph directly (no store lookup),
+// scoped to the subgraph reachable from startNodeID and seeded with input. Used
+// for saved flows, which run off their own frozen snapshot rather than a graph
+// held in the store.
+func (e *Engine) StartRunOnGraph(g *domain.Graph, startNodeID, input string) (string, error) {
+	runID, err := e.runs.CreateRun(g.ID)
+	if err != nil {
+		return "", err
+	}
+	go e.run(runID, g, startNodeID, input)
 	return runID, nil
 }
 
