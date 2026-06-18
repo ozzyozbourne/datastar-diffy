@@ -2,11 +2,9 @@ module diffy
 
 go 1.24
 
-replace github.com/starfederation/datastar-go => ../datastar-go
-
 require (
 	github.com/go-chi/chi/v5 v5.2.2
-	github.com/starfederation/datastar-go v1.0.1
+	github.com/starfederation/datastar-go v1.2.2
 )
 
 require (
